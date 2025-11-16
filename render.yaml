@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: mtc-ecommerce-api
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=512
+      - key: MONGODB_URI
+        value: your-mongodb-connection-string
+      - key: JWT_SECRET
+        value: your-jwt-secret-key
+      - key: PORT
+        value: "10000"
