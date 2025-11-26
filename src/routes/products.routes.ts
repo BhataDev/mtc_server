@@ -12,6 +12,9 @@ const router = Router();
 
 // Public routes (no auth required)
 router.get('/', ProductController.getAllProducts);
+router.get('/search', ProductController.searchProducts);
+router.get('/best-selling', ProductController.getBestSellingProducts);
+router.get('/own-products', ProductController.getOwnProducts);
 router.get('/:id', ProductController.getProduct);
 
 // Protected routes (require authentication)

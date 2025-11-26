@@ -77,20 +77,25 @@ export class NewArrivalController {
 
   static async createNewArrival(req: Request, res: Response, next: NextFunction) {
     try {
-      const { buttonUrl, title, description } = req.body;
+      const { product, title, description } = req.body;
       let imageUrl = '/placeholder-new-arrival.jpg';
 
-      // Handle image upload if file is provided
-      if (req.file) {
-        const storage = StorageFactory.getStorage();
-        imageUrl = await storage.upload(req.file, 'new-arrivals');
+      // Validate product field
+      if (!product) {
+        throw new AppError('Product ID is required', 400, 'VALIDATION_ERROR');
+      }
+
+      // Handle Cloudinary image upload result (from middleware)
+      if ((req as any).cloudinaryResult) {
+        imageUrl =
+          (req as any).cloudinaryResult.url || (req as any).cloudinaryResult;
       }
 
       const newArrival = new NewArrival({
-        imageUrl,
-        buttonUrl: buttonUrl || '#',
+        product,
         title,
         description,
+        imageUrl,
         createdBy: req.user!.id,
         createdRole: req.user!.role,
         branch: req.user!.role === 'branch' ? req.user!.branchId : null,
@@ -137,7 +142,7 @@ export class NewArrivalController {
   static async updateNewArrival(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const { buttonUrl, title, description, isActive } = req.body;
+      const { product, title, description, isActive } = req.body;
 
       const newArrival = await NewArrival.findById(id);
 
@@ -153,20 +158,23 @@ export class NewArrivalController {
 
       const oldNewArrival = newArrival.toObject();
 
-      // Handle image upload if file is provided
-      if (req.file) {
-        const storage = StorageFactory.getStorage();
-        
+      // Handle Cloudinary image upload result (from middleware)
+      if ((req as any).cloudinaryResult) {
         // Delete old image if it's not a placeholder
-        if (newArrival.imageUrl && !newArrival.imageUrl.includes('placeholder')) {
+        if (
+          newArrival.imageUrl &&
+          !newArrival.imageUrl.includes('placeholder')
+        ) {
+          const storage = StorageFactory.getStorage();
           await storage.delete(newArrival.imageUrl);
         }
-        
-        newArrival.imageUrl = await storage.upload(req.file, 'new-arrivals');
+
+        newArrival.imageUrl =
+          (req as any).cloudinaryResult.url || (req as any).cloudinaryResult;
       }
 
       // Update fields
-      if (buttonUrl !== undefined) newArrival.buttonUrl = buttonUrl;
+      if (product !== undefined) newArrival.product = product;
       if (title !== undefined) newArrival.title = title;
       if (description !== undefined) newArrival.description = description;
       if (isActive !== undefined) newArrival.isActive = isActive;

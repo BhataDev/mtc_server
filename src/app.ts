@@ -64,7 +64,9 @@ const corsAllowList = [
   adminOrigin, 
   userOrigin,
   'https://mtc-userside.netlify.app',
-  'https://mtc-adminside.netlify.app'
+  'https://mtc-adminside.netlify.app',
+  'http://192.168.1.86:5173',
+  'http://192.168.1.86:5174'
 ];
 app.use(cors({
   origin: (origin, callback) => {

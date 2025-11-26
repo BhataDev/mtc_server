@@ -3,6 +3,7 @@ import { Product, generateProductId } from './product.model';
 import { Category } from '../categories/category.model';
 import { Subcategory } from '../subcategories/subcategory.model';
 import { Brand } from '../brands/brand.model';
+import { Order } from '../orders/order.model';
 import { AppError } from '../../middlewares/error.middleware';
 import { AuditService } from '../audit/audit.service';
 import { SocketService } from '../../sockets/socket.service';
@@ -22,6 +23,211 @@ export class ProductController {
       if (query.brand) filter.brand = query.brand;
       if (query.isOwn !== undefined) filter.isOwn = query.isOwn === 'true';
       if (query.isActive !== undefined) filter.isActive = query.isActive === 'true';
+
+      // Price range filter
+      if (query.minPrice || query.maxPrice) {
+        filter.price = {};
+        if (query.minPrice) filter.price.$gte = parseFloat(query.minPrice);
+        if (query.maxPrice) filter.price.$lte = parseFloat(query.maxPrice);
+      }
+
+      // Text search
+      if (query.q) {
+        filter.$text = { $search: query.q };
+      }
+
+      // Pagination
+      const page = parseInt(query.page || '1');
+      const limit = parseInt(query.limit || '20');
+      const skip = (page - 1) * limit;
+
+      const [products, total] = await Promise.all([
+        Product.find(filter)
+          .populate('category', 'name')
+          .populate('subcategory', 'name')
+          .populate('brand', 'name')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Product.countDocuments(filter)
+      ]);
+
+      // Apply offer pricing to products
+      const { branchId, lat, lng } = req.query;
+      const userLocation = lat && lng ? { lat: Number(lat), lng: Number(lng) } : undefined;
+      const productsWithOffers = await OfferService.applyOfferPricingToProducts(
+        products,
+        branchId as string,
+        userLocation
+      );
+
+      res.json({
+        ok: true,
+        data: {
+          products: productsWithOffers,
+          pagination: {
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit)
+          }
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async searchProducts(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { q, category, subcategory, brand, isOwn, isActive, limit } = req.query as any;
+
+      const searchTerm = (q || '').toString().trim();
+
+      if (!searchTerm) {
+        res.json({
+          ok: true,
+          data: {
+            products: []
+          }
+        });
+        return;
+      }
+
+      const filter: any = {};
+
+      if (category) filter.category = category;
+      if (subcategory) filter.subcategory = subcategory;
+      if (brand) filter.brand = brand;
+      if (isOwn !== undefined) filter.isOwn = isOwn === 'true';
+
+      // By default, only search active products unless explicitly overridden
+      if (isActive !== undefined) {
+        filter.isActive = isActive === 'true';
+      } else {
+        filter.isActive = true;
+      }
+
+      // Search by productId, title, or modelNumber (case-insensitive partial match)
+      filter.$or = [
+        { productId: { $regex: searchTerm, $options: 'i' } },
+        { title: { $regex: searchTerm, $options: 'i' } },
+        { modelNumber: { $regex: searchTerm, $options: 'i' } }
+      ];
+
+      const limitNumber = Math.min(parseInt(limit || '10', 10) || 10, 50);
+
+      const products = await Product.find(filter)
+        .populate('category', 'name')
+        .populate('subcategory', 'name')
+        .populate('brand', 'name')
+        .sort({ createdAt: -1 })
+        .limit(limitNumber)
+        .lean();
+
+      // Apply offer pricing to products (same as getAllProducts)
+      const { branchId, lat, lng } = req.query;
+      const userLocation = lat && lng ? { lat: Number(lat), lng: Number(lng) } : undefined;
+      const productsWithOffers = await OfferService.applyOfferPricingToProducts(
+        products,
+        branchId as string,
+        userLocation
+      );
+
+      res.json({
+        ok: true,
+        data: {
+          products: productsWithOffers
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getBestSellingProducts(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { limit, branchId, lat, lng } = req.query;
+      const limitNumber = Math.min(parseInt(limit as string || '10', 10) || 10, 50);
+
+      // Aggregate delivered orders to find best-selling products
+      const bestSellingData = await Order.aggregate([
+        // Match only delivered orders
+        { $match: { status: 'delivered' } },
+        // Unwind items array to process each item separately
+        { $unwind: '$items' },
+        // Group by product ID and count occurrences
+        {
+          $group: {
+            _id: '$items.product',
+            totalSold: { $sum: '$items.quantity' },
+            orderCount: { $sum: 1 },
+            avgPrice: { $avg: '$items.price' }
+          }
+        },
+        // Sort by total quantity sold (descending)
+        { $sort: { totalSold: -1 } },
+        // Limit results
+        { $limit: limitNumber }
+      ]);
+
+      // Extract product IDs
+      const productIds = bestSellingData.map(item => item._id);
+
+      // Fetch full product details
+      const products = await Product.find({ _id: { $in: productIds } })
+        .populate('category', 'name')
+        .populate('subcategory', 'name')
+        .populate('brand', 'name')
+        .lean();
+
+      // Map sales data to products and sort by sales count
+      const productsWithSalesData = products.map(product => {
+        const salesData = bestSellingData.find(item => item._id.toString() === product._id.toString());
+        return {
+          ...product,
+          totalSold: salesData?.totalSold || 0,
+          orderCount: salesData?.orderCount || 0,
+          avgPrice: salesData?.avgPrice || product.price
+        };
+      }).sort((a, b) => b.totalSold - a.totalSold);
+
+      // Apply offer pricing to products
+      const userLocation = lat && lng ? { lat: Number(lat), lng: Number(lng) } : undefined;
+      const productsWithOffers = await OfferService.applyOfferPricingToProducts(
+        productsWithSalesData,
+        branchId as string,
+        userLocation
+      );
+
+      res.json({
+        ok: true,
+        data: {
+          products: productsWithOffers
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async getOwnProducts(req: Request, res: Response, next: NextFunction) {
+    try {
+      const query: ProductQueryDto = req.query as any;
+      const filter: any = { isOwn: true };
+
+      // Build additional filters
+      if (query.category) filter.category = query.category;
+      if (query.subcategory) filter.subcategory = query.subcategory;
+      if (query.brand) filter.brand = query.brand;
+
+      // By default, only get active products unless explicitly overridden
+      if (query.isActive !== undefined) {
+        filter.isActive = query.isActive === 'true';
+      } else {
+        filter.isActive = true;
+      }
 
       // Price range filter
       if (query.minPrice || query.maxPrice) {

@@ -1,10 +1,10 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface INewArrival extends Document {
-  imageUrl: string;
-  buttonUrl: string;
+  product: mongoose.Types.ObjectId;
   title: string;
   description: string;
+  imageUrl: string;
   isActive: boolean;
   createdBy: mongoose.Types.ObjectId;
   createdRole: 'admin' | 'branch';
@@ -16,13 +16,10 @@ export interface INewArrival extends Document {
 
 const NewArrivalSchema = new Schema<INewArrival>(
   {
-    imageUrl: {
-      type: String,
+    product: {
+      type: Schema.Types.ObjectId,
+      ref: 'Product',
       required: true
-    },
-    buttonUrl: {
-      type: String,
-      default: '#'
     },
     title: {
       type: String,
@@ -33,6 +30,10 @@ const NewArrivalSchema = new Schema<INewArrival>(
       type: String,
       required: true,
       trim: true
+    },
+    imageUrl: {
+      type: String,
+      required: true
     },
     isActive: {
       type: Boolean,
